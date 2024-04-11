@@ -8,6 +8,7 @@ on:
 env:
   registry: ghcr.io
   registry_org: settlemint
+  release_name: 24.3.4-SNAPSHOT
 
 jobs:
   hadolint:
@@ -81,11 +82,11 @@ jobs:
           architecture: ${{ steps.prep.outputs.ARCH }}
         with:
           cache-disabled: true
-          arguments: testDocker -PdockerOrgName=${{ env.registry }}/${{ env.registry_org }} -Pversion=${{github.event.release.name}} -Prelease.releaseVersion=${{ github.event.release.name }}
+          arguments: testDocker -PdockerOrgName=${{ env.registry }}/${{ env.registry_org }} -Pversion=${{env.release_name}} -Prelease.releaseVersion=${{ env.release_name }}
       - name: publish
         env:
           architecture: ${{ steps.prep.outputs.ARCH }}
-        run: ./gradlew --no-daemon dockerUpload -PdockerOrgName=${{ env.registry }}/${{ env.registry_org }} -Pversion=${{github.event.release.name}} -Prelease.releaseVersion=${{ github.event.release.name }}
+        run: ./gradlew --no-daemon dockerUpload -PdockerOrgName=${{ env.registry }}/${{ env.registry_org }} -Pversion=${{env.release_name}} -Prelease.releaseVersion=${{ env.release_name }}
   multiArch:
     needs: buildDocker
     runs-on: ubuntu-22.04
@@ -111,7 +112,7 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: multi-arch docker
-        run: ./gradlew manifestDocker -PdockerOrgName=${{ env.registry }}/${{ env.registry_org }} -Pversion=${{github.event.release.name}} -Prelease.releaseVersion=${{ github.event.release.name }}
+        run: ./gradlew manifestDocker -PdockerOrgName=${{ env.registry }}/${{ env.registry_org }} -Pversion=${{env.release_name}} -Prelease.releaseVersion=${{ env.release_name }}
   amendNotes:
     needs: multiArch
     runs-on: ubuntu-22.04
@@ -123,4 +124,4 @@ jobs:
         with:
           append_body: true
           body: |
-            `docker pull ${{env.registry}}/${{env.registry_org}}/besu:${{github.event.release.name}}`
+            `docker pull ${{env.registry}}/${{env.registry_org}}/besu:${{env.release_name}}`
