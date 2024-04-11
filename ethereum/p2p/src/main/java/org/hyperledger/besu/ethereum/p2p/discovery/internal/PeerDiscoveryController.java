@@ -318,6 +318,7 @@ public class PeerDiscoveryController {
           final PingPacketData ping = packet.getPacketData(PingPacketData.class).get();
           if (!PeerDiscoveryStatus.BONDED.equals(peer.getStatus())
               && (bondingPeers.getIfPresent(sender.getId()) == null)) {
+            LOG.trace("PING packet, peer not bonded yet, will bond first: {}", peerId);
             bond(peer);
           }
           respondToPing(ping, packet.getHash(), peer);
@@ -701,8 +702,10 @@ public class PeerDiscoveryController {
         peerTable.get(peer).filter(known -> known.discoveryEndpointMatches(peer));
     DiscoveryPeer resolvedPeer = maybeKnownPeer.orElse(peer);
     if (maybeKnownPeer.isEmpty()) {
+      LOG.trace("resolvePeer, unknown peer: {}", peer.getId());
       final DiscoveryPeer bondingPeer = bondingPeers.getIfPresent(peer.getId());
       if (bondingPeer != null) {
+        LOG.trace("resolvePeer, bonding peer: {}", peer.getId());
         resolvedPeer = bondingPeer;
       }
     }
