@@ -1,10 +1,10 @@
 name: docker
 on:
-  release:
-    types:
-      - prereleased
+  workflow_dispatch:
+
 env:
-  registry: docker.io
+  registry: ghcr.io
+  registry_org: settlemint
 
 jobs:
   hadolint:
@@ -70,19 +70,19 @@ jobs:
         uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d
         with:
           registry: ${{ env.registry }}
-          username: ${{ secrets.DOCKER_USER_RW }}
-          password: ${{ secrets.DOCKER_PASSWORD_RW }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: build and test docker
         uses: gradle/actions/setup-gradle@9e899d11ad247ec76be7a60bc1cf9d3abbb9e7f1
         env:
           architecture: ${{ steps.prep.outputs.ARCH }}
         with:
           cache-disabled: true
-          arguments: testDocker -PdockerOrgName=${{ env.registry }}/${{ secrets.DOCKER_ORG }} -Pversion=${{github.event.release.name}} -Prelease.releaseVersion=${{ github.event.release.name }}
+          arguments: testDocker -PdockerOrgName=${{ env.registry }}/${{ env.registry_org }} -Pversion=${{github.event.release.name}} -Prelease.releaseVersion=${{ github.event.release.name }}
       - name: publish
         env:
           architecture: ${{ steps.prep.outputs.ARCH }}
-        run: ./gradlew --no-daemon dockerUpload -PdockerOrgName=${{ env.registry }}/${{ secrets.DOCKER_ORG }} -Pversion=${{github.event.release.name}} -Prelease.releaseVersion=${{ github.event.release.name }}
+        run: ./gradlew --no-daemon dockerUpload -PdockerOrgName=${{ env.registry }}/${{ env.registry_org }} -Pversion=${{github.event.release.name}} -Prelease.releaseVersion=${{ github.event.release.name }}
   multiArch:
     needs: buildDocker
     runs-on: ubuntu-22.04
@@ -105,10 +105,10 @@ jobs:
         uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d
         with:
           registry: ${{ env.registry }}
-          username: ${{ secrets.DOCKER_USER_RW }}
-          password: ${{ secrets.DOCKER_PASSWORD_RW }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: multi-arch docker
-        run: ./gradlew manifestDocker -PdockerOrgName=${{ env.registry }}/${{ secrets.DOCKER_ORG }} -Pversion=${{github.event.release.name}} -Prelease.releaseVersion=${{ github.event.release.name }}
+        run: ./gradlew manifestDocker -PdockerOrgName=${{ env.registry }}/${{ env.registry_org }} -Pversion=${{github.event.release.name}} -Prelease.releaseVersion=${{ github.event.release.name }}
   amendNotes:
     needs: multiArch
     runs-on: ubuntu-22.04
@@ -120,4 +120,4 @@ jobs:
         with:
           append_body: true
           body: |
-            `docker pull ${{env.registry}}/${{secrets.DOCKER_ORG}}/besu:${{github.event.release.name}}`
+            `docker pull ${{env.registry}}/${{env.registry_org}}/besu:${{github.event.release.name}}`
