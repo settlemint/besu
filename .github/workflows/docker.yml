@@ -38,7 +38,7 @@ jobs:
       matrix:
         platform:
           - ubuntu-22.04
-          - [self-hosted, ARM64]
+          - [self-hosted, namespace-profile-default-arm64]
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Prepare
