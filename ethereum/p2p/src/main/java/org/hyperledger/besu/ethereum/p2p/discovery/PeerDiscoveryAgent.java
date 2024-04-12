@@ -185,9 +185,16 @@ public abstract class PeerDiscoveryAgent {
                             .listeningPort(tcpPort)
                             .discoveryPort(externalDiscoveryPort)
                             .build());
+
                 this.localNode = Optional.of(ourNode);
                 this.isActive = true;
                 LOG.info("P2P peer discovery agent started and listening on {}", localAddress);
+                LOG.trace("P2P peer discovery Local discovery port {}", localDiscoveryPort);
+                LOG.trace("P2P peer discovery advertised discovery port {}", externalDiscoveryPort);
+                LOG.trace("P2P peer discovery node discovery port {}", ourNode.getEnodeURL().getDiscoveryPortOrZero());
+                LOG.trace("P2P peer discovery node udp port {}", ourNode.getEndpoint().getUdpPort());
+
+
                 updateNodeRecord();
                 startController(ourNode);
                 return localDiscoveryPort;

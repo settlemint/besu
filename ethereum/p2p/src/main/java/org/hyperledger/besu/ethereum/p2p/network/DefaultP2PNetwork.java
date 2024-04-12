@@ -488,6 +488,11 @@ public class DefaultP2PNetwork implements P2PNetwork {
 
     LOG.info("Enode URL {}", localEnode.toString());
     LOG.info("Node address {}", Util.publicKeyToAddress(localEnode.getNodeId()));
+
+    LOG.trace("Discovery port {}", discoveryPort);
+    LOG.trace("Advertised discovery port {}", advertisedDiscoveryPort);
+    LOG.trace("Enode discovery port {}", localEnode.getDiscoveryPortOrZero());
+
     localNode.setEnode(localEnode);
   }
 
