@@ -8,7 +8,7 @@ on:
 env:
   registry: ghcr.io
   registry_org: settlemint
-  release_name: 24.3.6-SNAPSHOT
+  release_name: 24.3.7-SNAPSHOT
 
 jobs:
   hadolint:

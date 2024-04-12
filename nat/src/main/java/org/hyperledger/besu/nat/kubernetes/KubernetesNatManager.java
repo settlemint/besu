@@ -137,7 +137,7 @@ public class KubernetesNatManager extends AbstractNatManager {
                           v1ServicePort.getPort(),
                           v1ServicePort.getTargetPort().getIntValue()));
 
-                  LOG.trace("Setting NAT {} port to {}", natServiceType, v1ServicePort.getTargetPort().getIntValue());
+                  LOG.trace("Setting NAT {} port mapping to {} -> {}", natServiceType, v1ServicePort.getPort(), v1ServicePort.getTargetPort().getIntValue());
                 } catch (IllegalStateException e) {
                   LOG.warn("Ignored unknown Besu port: {}", e.getMessage());
                 }
