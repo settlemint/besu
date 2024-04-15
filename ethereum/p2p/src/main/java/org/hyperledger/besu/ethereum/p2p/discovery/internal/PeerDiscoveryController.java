@@ -329,9 +329,12 @@ public class PeerDiscoveryController {
             .ifPresent(
                 interaction -> {
                   if (filterOnEnrForkId) {
+                    LOG.trace("Request ENR");
                     requestENR(peer);
                   }
+                  LOG.trace("Invalidate Peer ID {}", peerId);
                   bondingPeers.invalidate(peerId);
+                  LOG.trace("Add peer to table {}", peer.getEnodeURL());
                   addToPeerTable(peer);
                   recursivePeerRefreshState.onBondingComplete(peer);
                   Optional.ofNullable(cachedEnrRequests.getIfPresent(peerId))
@@ -434,16 +437,19 @@ public class PeerDiscoveryController {
     final Bytes nodeId = packet.getNodeId();
     final Map<PacketType, PeerInteractionState> stateMap = inflightInteractions.get(nodeId);
     if (stateMap == null) {
+      LOG.trace("No statemap found.");
       return Optional.empty();
     }
     final PacketType packetType = packet.getType();
     final PeerInteractionState interaction = stateMap.get(packetType);
     if (interaction == null || !interaction.test(packet)) {
+      LOG.trace("Interaction {} or does not match", interaction == null ? "is null" : "is not null");
       return Optional.empty();
     }
     interaction.cancelTimers();
     stateMap.remove(packetType);
     if (stateMap.isEmpty()) {
+      LOG.trace("Remove node {} from in flight interactions.", nodeId);
       inflightInteractions.remove(nodeId);
     }
     return Optional.of(interaction);
@@ -493,6 +499,7 @@ public class PeerDiscoveryController {
       return;
     }
 
+    LOG.trace("Initiate bonding with {}", peer.getEnodeURL());
     peer.setFirstDiscovered(System.currentTimeMillis());
     peer.setStatus(PeerDiscoveryStatus.BONDING);
     bondingPeers.put(peer.getId(), peer);
@@ -755,7 +762,9 @@ public class PeerDiscoveryController {
 
     @Override
     public boolean test(final Packet packet) {
-      return expectedType == packet.getType() && (filter == null || filter.test(packet));
+      final Boolean filterTest = (filter == null || filter.test(packet));
+      LOG.trace("Test interaction {} == {}? filterTest result: {}", expectedType, packet.getType(), filterTest);
+      return expectedType == packet.getType() && (filterTest);
     }
 
     void updateFilter(final Predicate<Packet> filter) {
