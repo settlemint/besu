@@ -632,6 +632,7 @@ public class PeerDiscoveryController {
         inflightInteractions
             .computeIfAbsent(id, k -> new ConcurrentHashMap<>())
             .put(state.expectedType, state);
+    LOG.trace("Dispatching transaction {}", state.expectedType);
     if (previous != null) {
       previous.cancelTimers();
     }
