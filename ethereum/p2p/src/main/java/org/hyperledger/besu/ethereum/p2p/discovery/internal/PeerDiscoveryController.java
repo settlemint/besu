@@ -313,6 +313,7 @@ public class PeerDiscoveryController {
     final Bytes peerId = peer.getId();
     switch (packet.getType()) {
       case PING:
+        LOG.trace("PING received");
         if (peerPermissions.allowInboundBonding(peer)) {
           peer.setLastSeen(System.currentTimeMillis());
           final PingPacketData ping = packet.getPacketData(PingPacketData.class).get();
@@ -325,6 +326,7 @@ public class PeerDiscoveryController {
         }
         break;
       case PONG:
+        LOG.trace("PONG received");
         matchInteraction(packet)
             .ifPresent(
                 interaction -> {
