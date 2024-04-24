@@ -439,7 +439,19 @@ public class PeerDiscoveryController {
     final Bytes nodeId = packet.getNodeId();
     final Map<PacketType, PeerInteractionState> stateMap = inflightInteractions.get(nodeId);
     if (stateMap == null) {
-      LOG.trace("No statemap found.");
+      LOG.trace("No statemap found for {}.", nodeId);
+
+      LOG.trace("Current statemap:");
+      for (Map.Entry<Bytes, Map<PacketType, PeerInteractionState>> entry : inflightInteractions.entrySet()) {
+        Bytes key = entry.getKey();
+        Map<PacketType, PeerInteractionState> value = entry.getValue();
+        for (Map.Entry<PacketType, PeerInteractionState> innerEntry : value.entrySet()) {
+          PacketType packetType = innerEntry.getKey();
+          PeerInteractionState state = innerEntry.getValue();
+          LOG.trace("- nodeId: {}, packet type: {}, value: {}", key, packetType, state);
+        }
+      }
+
       return Optional.empty();
     }
     final PacketType packetType = packet.getType();
@@ -533,6 +545,7 @@ public class PeerDiscoveryController {
         };
 
     // The filter condition will be updated as soon as the action is performed.
+    LOG.trace("Starting Peer Interaction {}", peer.getId());
     final PeerInteractionState peerInteractionState =
         new PeerInteractionState(action, peer.getId(), PacketType.PONG, packet -> false);
     dispatchInteraction(peer, peerInteractionState);
@@ -634,7 +647,7 @@ public class PeerDiscoveryController {
         inflightInteractions
             .computeIfAbsent(id, k -> new ConcurrentHashMap<>())
             .put(state.expectedType, state);
-    LOG.trace("Dispatching transaction {}", state.expectedType);
+    LOG.trace("Dispatching transaction for {}: {}", id, state.expectedType);
     if (previous != null) {
       previous.cancelTimers();
     }
