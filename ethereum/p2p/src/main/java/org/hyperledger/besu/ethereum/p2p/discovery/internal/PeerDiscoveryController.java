@@ -438,20 +438,21 @@ public class PeerDiscoveryController {
   private Optional<PeerInteractionState> matchInteraction(final Packet packet) {
     final Bytes nodeId = packet.getNodeId();
     final Map<PacketType, PeerInteractionState> stateMap = inflightInteractions.get(nodeId);
+
+    LOG.trace("Current statemap: ===============");
+    for (Map.Entry<Bytes, Map<PacketType, PeerInteractionState>> entry : inflightInteractions.entrySet()) {
+      Bytes key = entry.getKey();
+      Map<PacketType, PeerInteractionState> value = entry.getValue();
+      for (Map.Entry<PacketType, PeerInteractionState> innerEntry : value.entrySet()) {
+        PacketType packetType = innerEntry.getKey();
+        PeerInteractionState state = innerEntry.getValue();
+        LOG.trace("- nodeId: {}, packet type: {}, value: {}", key, packetType, state);
+      }
+    }
+    LOG.trace("========================");
+
     if (stateMap == null) {
       LOG.trace("No statemap found for {}.", nodeId);
-
-      LOG.trace("Current statemap:");
-      for (Map.Entry<Bytes, Map<PacketType, PeerInteractionState>> entry : inflightInteractions.entrySet()) {
-        Bytes key = entry.getKey();
-        Map<PacketType, PeerInteractionState> value = entry.getValue();
-        for (Map.Entry<PacketType, PeerInteractionState> innerEntry : value.entrySet()) {
-          PacketType packetType = innerEntry.getKey();
-          PeerInteractionState state = innerEntry.getValue();
-          LOG.trace("- nodeId: {}, packet type: {}, value: {}", key, packetType, state);
-        }
-      }
-
       return Optional.empty();
     }
     final PacketType packetType = packet.getType();
@@ -722,7 +723,15 @@ public class PeerDiscoveryController {
   // Load the peer first from the table, then from bonding cache or use the instance that comes in.
   private DiscoveryPeer resolvePeer(final DiscoveryPeer peer) {
     final Optional<DiscoveryPeer> maybeKnownPeer =
-        peerTable.get(peer).filter(known -> known.discoveryEndpointMatches(peer));
+        peerTable.get(peer);
+    if (maybeKnownPeer.isPresent()) {
+      LOG.trace("resolvePeer, peer was known before filter: {}", peer.getId());
+    }
+    final Optional<DiscoveryPeer> maybeKnownAndMatchingEndpointPeer = maybeKnownPeer.filter(known -> known.discoveryEndpointMatches(peer));
+    if (maybeKnownAndMatchingEndpointPeer.isEmpty()) {
+      LOG.trace("resolvePeer, peer was not known after filter: {}", peer.getId());
+    }
+    // TODO skipping the filter for now
     DiscoveryPeer resolvedPeer = maybeKnownPeer.orElse(peer);
     if (maybeKnownPeer.isEmpty()) {
       LOG.trace("resolvePeer, unknown peer: {}", peer.getId());
