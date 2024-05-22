@@ -20,6 +20,7 @@ import org.hyperledger.besu.consensus.common.BlockInterface;
 import org.hyperledger.besu.consensus.common.EpochManager;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.chain.Blockchain;
+import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 
 import java.util.ArrayDeque;
@@ -29,8 +30,12 @@ import java.util.concurrent.ExecutionException;
 
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 class VoteTallyCache {
+
+  private static final Logger LOG = LoggerFactory.getLogger(VoteTallyCache.class);
 
   private final Blockchain blockchain;
   private final EpochManager epochManager;
@@ -57,7 +62,9 @@ class VoteTallyCache {
   }
 
   VoteTally getVoteTallyAtHead() {
-    return getVoteTallyAfterBlock(blockchain.getChainHeadHeader());
+    final BlockHeader blockHeader = blockchain.getChainHeadHeader();
+    LOG.debug("Block Header {}", blockHeader);
+    return getVoteTallyAfterBlock(blockHeader);
   }
 
   /**
