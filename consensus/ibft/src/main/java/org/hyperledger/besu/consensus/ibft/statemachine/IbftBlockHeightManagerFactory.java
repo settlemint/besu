@@ -18,10 +18,13 @@ import org.hyperledger.besu.consensus.common.bft.BftHelpers;
 import org.hyperledger.besu.consensus.common.bft.statemachine.BftFinalState;
 import org.hyperledger.besu.consensus.ibft.payload.MessageFactory;
 import org.hyperledger.besu.consensus.ibft.validation.MessageValidatorFactory;
+import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.Collection;
 
 /** The Ibft block height manager factory. */
 public class IbftBlockHeightManagerFactory {
@@ -64,6 +67,9 @@ public class IbftBlockHeightManagerFactory {
       return createFullBlockHeightManager(parentHeader);
     } else {
       LOG.debug("Local node is a non-validator");
+      final Collection<Address> validators = finalState.getValidators();
+      final Address localAddress = finalState.getLocalAddress();
+      LOG.debug("Validators {}, my local address {}", validators, localAddress);
       return createNoOpBlockHeightManager(parentHeader);
     }
   }
