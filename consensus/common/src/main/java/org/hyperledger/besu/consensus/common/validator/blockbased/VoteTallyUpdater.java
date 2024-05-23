@@ -76,6 +76,9 @@ class VoteTallyUpdater {
       return;
     }
     final Optional<ValidatorVote> vote = blockInterface.extractVoteFromHeader(header);
-    vote.ifPresent(voteTally::addVote);
+    vote.ifPresent( v -> {
+      LOG.debug("Vote found in {}", header.getNumber());
+      voteTally.addVote(v);
+    });
   }
 }

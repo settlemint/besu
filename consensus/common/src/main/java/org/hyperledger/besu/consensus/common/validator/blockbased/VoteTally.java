@@ -68,11 +68,11 @@ class VoteTally {
             validatorVote.getRecipient(), target -> new HashSet<>());
 
     if (validatorVote.isAuthVote()) {
-      LOG.debug("Adding vote for {}", validatorVote.getRecipient());
+      LOG.debug("Adding vote for {} by {}", validatorVote.getRecipient(), validatorVote.getProposer());
       addVotesForSubject.add(validatorVote.getProposer());
       removeVotesForSubject.remove(validatorVote.getProposer());
     } else {
-      LOG.debug("Removing vote for {}", validatorVote.getRecipient());
+      LOG.debug("Removing vote for {} by {}", validatorVote.getRecipient(), validatorVote.getProposer());
       removeVotesForSubject.add(validatorVote.getProposer());
       addVotesForSubject.remove(validatorVote.getProposer());
     }
