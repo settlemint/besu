@@ -28,9 +28,13 @@ import java.util.Set;
 import java.util.TreeSet;
 
 import com.google.common.collect.Maps;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Tracks the current list of validators and votes to add or drop validators. */
 class VoteTally {
+
+  private static final Logger LOG = LoggerFactory.getLogger(VoteTally.class);
 
   private final NavigableSet<Address> currentValidators;
 
@@ -64,19 +68,25 @@ class VoteTally {
             validatorVote.getRecipient(), target -> new HashSet<>());
 
     if (validatorVote.isAuthVote()) {
+      LOG.debug("Adding vote for {}", validatorVote.getRecipient());
       addVotesForSubject.add(validatorVote.getProposer());
       removeVotesForSubject.remove(validatorVote.getProposer());
     } else {
+      LOG.debug("Removing vote for {}", validatorVote.getRecipient());
       removeVotesForSubject.add(validatorVote.getProposer());
       addVotesForSubject.remove(validatorVote.getProposer());
     }
 
     final int validatorLimit = validatorLimit();
+    LOG.debug("Votes for subject {}, limit {}", validatorVote.getRecipient(), validatorLimit);
+
     if (addVotesForSubject.size() >= validatorLimit) {
+      LOG.debug("Adding {} to validators", validatorVote.getRecipient());
       currentValidators.add(validatorVote.getRecipient());
       discardOutstandingVotesFor(validatorVote.getRecipient());
     }
     if (removeVotesForSubject.size() >= validatorLimit) {
+      LOG.debug("Removing {} to validators", validatorVote.getRecipient());
       currentValidators.remove(validatorVote.getRecipient());
       discardOutstandingVotesFor(validatorVote.getRecipient());
       addVotesBySubject.values().forEach(votes -> votes.remove(validatorVote.getRecipient()));

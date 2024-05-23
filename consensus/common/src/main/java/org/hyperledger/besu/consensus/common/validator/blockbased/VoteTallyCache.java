@@ -27,6 +27,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.NoSuchElementException;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
 
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
@@ -91,6 +92,8 @@ class VoteTallyCache {
     final Deque<BlockHeader> intermediateBlocks = new ArrayDeque<>();
     VoteTally voteTally = null;
 
+    LOG.debug("Populate cache up to {}", start);
+
     while (true) { // Will run into an epoch block (and thus a VoteTally) to break loop.
       intermediateBlocks.push(header);
       voteTally = getValidatorsAfter(header);
@@ -119,6 +122,8 @@ class VoteTallyCache {
 
   private VoteTally constructMissingCacheEntries(
       final Deque<BlockHeader> headers, final VoteTally tally) {
+    LOG.debug("Construct missing cache");
+
     final VoteTally mutableVoteTally = tally.copy();
     while (!headers.isEmpty()) {
       final BlockHeader h = headers.pop();
