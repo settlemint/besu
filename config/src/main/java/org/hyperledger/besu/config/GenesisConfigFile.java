@@ -14,13 +14,10 @@
  */
 package org.hyperledger.besu.config;
 
-import static org.hyperledger.besu.config.JsonUtil.normalizeKeys;
-
 import org.hyperledger.besu.datatypes.Wei;
 
 import java.net.URL;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,22 +27,24 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.common.collect.Streams;
 
 /** The Genesis config file. */
 public class GenesisConfigFile {
 
   /** The constant DEFAULT. */
   public static final GenesisConfigFile DEFAULT =
-      new GenesisConfigFile(JsonUtil.createEmptyObjectNode());
+      new GenesisConfigFile(new GenesisReader.FromObjectNode(JsonUtil.createEmptyObjectNode()));
 
   /** The constant BASEFEE_AT_GENESIS_DEFAULT_VALUE. */
   public static final Wei BASEFEE_AT_GENESIS_DEFAULT_VALUE = Wei.of(1_000_000_000L);
 
+  private final GenesisReader loader;
   private final ObjectNode genesisRoot;
+  private Map<String, String> overrides;
 
-  private GenesisConfigFile(final ObjectNode config) {
-    this.genesisRoot = config;
+  private GenesisConfigFile(final GenesisReader loader) {
+    this.loader = loader;
+    this.genesisRoot = loader.getRoot();
   }
 
   /**
@@ -70,21 +69,31 @@ public class GenesisConfigFile {
   /**
    * Genesis file from resource.
    *
-   * @param jsonResource the resource name
+   * @param resourceName the resource name
    * @return the genesis config file
    */
-  public static GenesisConfigFile fromResource(final String jsonResource) {
-    return fromSource(GenesisConfigFile.class.getResource(jsonResource));
+  public static GenesisConfigFile fromResource(final String resourceName) {
+    return fromConfig(GenesisConfigFile.class.getResource(resourceName));
   }
 
   /**
    * From config genesis config file.
    *
-   * @param jsonString the json string
+   * @param jsonSource the json string
    * @return the genesis config file
    */
-  public static GenesisConfigFile fromConfig(final String jsonString) {
-    return fromConfig(JsonUtil.objectNodeFromString(jsonString, false));
+  public static GenesisConfigFile fromConfig(final URL jsonSource) {
+    return new GenesisConfigFile(new GenesisReader.FromURL(jsonSource));
+  }
+
+  /**
+   * From config genesis config file.
+   *
+   * @param json the json string
+   * @return the genesis config file
+   */
+  public static GenesisConfigFile fromConfig(final String json) {
+    return fromConfig(JsonUtil.objectNodeFromString(json, false));
   }
 
   /**
@@ -94,35 +103,28 @@ public class GenesisConfigFile {
    * @return the genesis config file
    */
   public static GenesisConfigFile fromConfig(final ObjectNode config) {
-    return new GenesisConfigFile(normalizeKeys(config));
+    return new GenesisConfigFile(new GenesisReader.FromObjectNode(config));
   }
 
   /**
-   * Gets config options.
+   * Gets config options, including any overrides.
    *
    * @return the config options
    */
   public GenesisConfigOptions getConfigOptions() {
-    return getConfigOptions(Collections.emptyMap());
-  }
-
-  /**
-   * Gets config options.
-   *
-   * @param overrides the overrides
-   * @return the config options
-   */
-  public GenesisConfigOptions getConfigOptions(final Map<String, String> overrides) {
-    final ObjectNode config =
-        JsonUtil.getObjectNode(genesisRoot, "config").orElse(JsonUtil.createEmptyObjectNode());
-
-    Map<String, String> overridesRef = overrides;
+    final ObjectNode config = loader.getConfig();
+    // are there any overrides to apply?
+    if (this.overrides == null) {
+      return JsonGenesisConfigOptions.fromJsonObject(config);
+    }
+    // otherwise apply overrides
+    Map<String, String> overridesRef = this.overrides;
 
     // if baseFeePerGas has been explicitly configured, pass it as an override:
     final var optBaseFee = getBaseFeePerGas();
     if (optBaseFee.isPresent()) {
       // streams and maps cannot handle null values.
-      overridesRef = new HashMap<>(overrides);
+      overridesRef = new HashMap<>(this.overrides);
       overridesRef.put("baseFeePerGas", optBaseFee.get().toShortHexString());
     }
 
@@ -130,19 +132,24 @@ public class GenesisConfigFile {
   }
 
   /**
+   * Sets overrides for genesis options.
+   *
+   * @param overrides the overrides
+   * @return the config options
+   */
+  public GenesisConfigFile withOverrides(final Map<String, String> overrides) {
+
+    this.overrides = overrides;
+    return this;
+  }
+
+  /**
    * Stream allocations stream.
    *
    * @return the stream
    */
-  public Stream<GenesisAllocation> streamAllocations() {
-    return JsonUtil.getObjectNode(genesisRoot, "alloc").stream()
-        .flatMap(
-            allocations ->
-                Streams.stream(allocations.fieldNames())
-                    .map(
-                        key ->
-                            new GenesisAllocation(
-                                key, JsonUtil.getObjectNode(allocations, key).get())));
+  public Stream<GenesisAccount> streamAllocations() {
+    return loader.streamAllocations();
   }
 
   /**
@@ -344,7 +351,7 @@ public class GenesisConfigFile {
         + "genesisRoot="
         + genesisRoot
         + ", allocations="
-        + streamAllocations().map(GenesisAllocation::toString).collect(Collectors.joining(","))
+        + loader.streamAllocations().map(GenesisAccount::toString).collect(Collectors.joining(","))
         + '}';
   }
 }

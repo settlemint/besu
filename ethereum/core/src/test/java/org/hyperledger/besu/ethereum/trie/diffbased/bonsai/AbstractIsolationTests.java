@@ -20,7 +20,7 @@ import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import org.hyperledger.besu.config.GenesisAllocation;
+import org.hyperledger.besu.config.GenesisAccount;
 import org.hyperledger.besu.config.GenesisConfigFile;
 import org.hyperledger.besu.crypto.KeyPair;
 import org.hyperledger.besu.crypto.SECPPrivateKey;
@@ -85,7 +85,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.BiFunction;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
@@ -98,15 +97,17 @@ public abstract class AbstractIsolationTests {
   protected ProtocolContext protocolContext;
   protected EthContext ethContext;
   protected EthScheduler ethScheduler = new DeterministicEthScheduler();
-  final Function<String, KeyPair> asKeyPair =
+  final Function<Bytes32, KeyPair> asKeyPair =
       key ->
           SignatureAlgorithmFactory.getInstance()
-              .createKeyPair(SECPPrivateKey.create(Bytes32.fromHexString(key), "ECDSA"));
+              .createKeyPair(SECPPrivateKey.create(key, "ECDSA"));
   protected final ProtocolSchedule protocolSchedule =
       MainnetProtocolSchedule.fromConfig(
           GenesisConfigFile.fromResource("/dev.json").getConfigOptions(),
           MiningParameters.MINING_DISABLED,
-          new BadBlockManager());
+          new BadBlockManager(),
+          false,
+          new NoOpMetricsSystem());
   protected final GenesisState genesisState =
       GenesisState.fromConfig(GenesisConfigFile.fromResource("/dev.json"), protocolSchedule);
   protected final MutableBlockchain blockchain = createInMemoryBlockchain(genesisState.getBlock());
@@ -137,15 +138,16 @@ public abstract class AbstractIsolationTests {
               txPoolMetrics,
               transactionReplacementTester,
               new BlobCache(),
-              MiningParameters.newDefault()));
+              MiningParameters.newDefault()),
+          ethScheduler);
 
-  protected final List<GenesisAllocation> accounts =
+  protected final List<GenesisAccount> accounts =
       GenesisConfigFile.fromResource("/dev.json")
           .streamAllocations()
-          .filter(ga -> ga.getPrivateKey().isPresent())
-          .collect(Collectors.toList());
+          .filter(ga -> ga.privateKey() != null)
+          .toList();
 
-  KeyPair sender1 = asKeyPair.apply(accounts.get(0).getPrivateKey().get());
+  KeyPair sender1 = Optional.ofNullable(accounts.get(0).privateKey()).map(asKeyPair).orElseThrow();
   TransactionPool transactionPool;
 
   @TempDir private Path tempData;
@@ -179,7 +181,8 @@ public abstract class AbstractIsolationTests {
             mock(TransactionBroadcaster.class),
             ethContext,
             txPoolMetrics,
-            poolConfiguration);
+            poolConfiguration,
+            new BlobCache());
     transactionPool.setEnabled();
   }
 
@@ -198,6 +201,16 @@ public abstract class AbstractIsolationTests {
                 RocksDBMetricsFactory.PUBLIC_ROCKS_DB_METRICS))
         .withCommonConfiguration(
             new BesuConfiguration() {
+
+              @Override
+              public Optional<String> getRpcHttpHost() {
+                return Optional.empty();
+              }
+
+              @Override
+              public Optional<Integer> getRpcHttpPort() {
+                return Optional.empty();
+              }
 
               @Override
               public Path getStoragePath() {
@@ -247,7 +260,6 @@ public abstract class AbstractIsolationTests {
         final TransactionPool transactionPool,
         final ProtocolContext protocolContext,
         final ProtocolSchedule protocolSchedule,
-        final BlockHeader parentHeader,
         final EthScheduler ethScheduler) {
       super(
           miningParameters,
@@ -256,12 +268,10 @@ public abstract class AbstractIsolationTests {
           transactionPool,
           protocolContext,
           protocolSchedule,
-          parentHeader,
           ethScheduler);
     }
 
     static TestBlockCreator forHeader(
-        final BlockHeader parentHeader,
         final ProtocolContext protocolContext,
         final ProtocolSchedule protocolSchedule,
         final TransactionPool transactionPool,
@@ -286,7 +296,6 @@ public abstract class AbstractIsolationTests {
           transactionPool,
           protocolContext,
           protocolSchedule,
-          parentHeader,
           ethScheduler);
     }
 
@@ -319,8 +328,8 @@ public abstract class AbstractIsolationTests {
   protected Block forTransactions(
       final List<Transaction> transactions, final BlockHeader forHeader) {
     return TestBlockCreator.forHeader(
-            forHeader, protocolContext, protocolSchedule, transactionPool, ethScheduler)
-        .createBlock(transactions, Collections.emptyList(), System.currentTimeMillis())
+            protocolContext, protocolSchedule, transactionPool, ethScheduler)
+        .createBlock(transactions, Collections.emptyList(), System.currentTimeMillis(), forHeader)
         .getBlock();
   }
 

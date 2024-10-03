@@ -24,7 +24,6 @@ import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.ethereum.core.BlockDataGenerator;
 import org.hyperledger.besu.ethereum.core.BlockHeader;
 import org.hyperledger.besu.ethereum.core.BlockHeaderTestFixture;
-import org.hyperledger.besu.ethereum.core.MiningParameters;
 import org.hyperledger.besu.ethereum.core.MutableWorldState;
 import org.hyperledger.besu.ethereum.eth.manager.EthContext;
 import org.hyperledger.besu.ethereum.eth.manager.EthProtocolManager;
@@ -44,6 +43,7 @@ import org.hyperledger.besu.ethereum.worldstate.DataStorageConfiguration;
 import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
 import org.hyperledger.besu.ethereum.worldstate.WorldStateStorageCoordinator;
 import org.hyperledger.besu.metrics.ObservableMetricsSystem;
+import org.hyperledger.besu.metrics.SyncDurationMetrics;
 import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.plugin.services.storage.rocksdb.RocksDBKeyValueStorageFactory;
 import org.hyperledger.besu.plugin.services.storage.rocksdb.RocksDBMetricsFactory;
@@ -121,7 +121,8 @@ public class WorldStateDownloaderBenchmark {
             syncConfig.getWorldStateMaxRequestsWithoutProgress(),
             syncConfig.getWorldStateMinMillisBeforeStalling(),
             Clock.fixed(Instant.ofEpochSecond(1000), ZoneOffset.UTC),
-            metricsSystem);
+            metricsSystem,
+            SyncDurationMetrics.NO_OP_SYNC_DURATION_METRICS);
   }
 
   private Hash createExistingWorldState() {
@@ -165,8 +166,7 @@ public class WorldStateDownloaderBenchmark {
 
   private StorageProvider createKeyValueStorageProvider(final Path dataDir, final Path dbDir) {
     final var besuConfiguration = new BesuConfigurationImpl();
-    besuConfiguration.init(
-        dataDir, dbDir, DataStorageConfiguration.DEFAULT_CONFIG, MiningParameters.newDefault());
+    besuConfiguration.init(dataDir, dbDir, DataStorageConfiguration.DEFAULT_CONFIG);
     return new KeyValueStorageProviderBuilder()
         .withStorageFactory(
             new RocksDBKeyValueStorageFactory(

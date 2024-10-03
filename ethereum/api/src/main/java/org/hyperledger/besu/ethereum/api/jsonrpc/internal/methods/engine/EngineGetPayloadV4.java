@@ -14,8 +14,10 @@
  */
 package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.engine;
 
+import static org.hyperledger.besu.datatypes.HardforkId.MainnetHardforkId.PRAGUE;
+
+import org.hyperledger.besu.consensus.merge.PayloadWrapper;
 import org.hyperledger.besu.consensus.merge.blockcreation.MergeMiningCoordinator;
-import org.hyperledger.besu.consensus.merge.blockcreation.PayloadIdentifier;
 import org.hyperledger.besu.ethereum.ProtocolContext;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
@@ -23,9 +25,7 @@ import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcRespon
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.results.BlockResultFactory;
-import org.hyperledger.besu.ethereum.core.BlockWithReceipts;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
-import org.hyperledger.besu.ethereum.mainnet.ScheduledProtocolSpec;
 import org.hyperledger.besu.ethereum.mainnet.ValidationResult;
 
 import java.util.Optional;
@@ -34,7 +34,7 @@ import io.vertx.core.Vertx;
 
 public class EngineGetPayloadV4 extends AbstractEngineGetPayload {
 
-  private final Optional<ScheduledProtocolSpec.Hardfork> prague;
+  private final Optional<Long> pragueMilestone;
 
   public EngineGetPayloadV4(
       final Vertx vertx,
@@ -50,7 +50,7 @@ public class EngineGetPayloadV4 extends AbstractEngineGetPayload {
         mergeMiningCoordinator,
         blockResultFactory,
         engineCallListener);
-    this.prague = schedule.hardforkFor(s -> s.fork().name().equalsIgnoreCase("Prague"));
+    pragueMilestone = schedule.milestoneFor(PRAGUE);
   }
 
   @Override
@@ -60,28 +60,14 @@ public class EngineGetPayloadV4 extends AbstractEngineGetPayload {
 
   @Override
   protected JsonRpcResponse createResponse(
-      final JsonRpcRequestContext request,
-      final PayloadIdentifier payloadId,
-      final BlockWithReceipts blockWithReceipts) {
+      final JsonRpcRequestContext request, final PayloadWrapper payload) {
 
     return new JsonRpcSuccessResponse(
-        request.getRequest().getId(),
-        blockResultFactory.payloadTransactionCompleteV4(blockWithReceipts));
+        request.getRequest().getId(), blockResultFactory.payloadTransactionCompleteV4(payload));
   }
 
   @Override
   protected ValidationResult<RpcErrorType> validateForkSupported(final long blockTimestamp) {
-    if (protocolSchedule.isPresent()) {
-      if (prague.isPresent() && blockTimestamp >= prague.get().milestone()) {
-        return ValidationResult.valid();
-      } else {
-        return ValidationResult.invalid(
-            RpcErrorType.UNSUPPORTED_FORK,
-            "Prague configured to start at timestamp: " + prague.get().milestone());
-      }
-    } else {
-      return ValidationResult.invalid(
-          RpcErrorType.UNSUPPORTED_FORK, "Configuration error, no schedule for Prague fork set");
-    }
+    return ForkSupportHelper.validateForkSupported(PRAGUE, pragueMilestone, blockTimestamp);
   }
 }

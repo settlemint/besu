@@ -38,7 +38,9 @@ public class RequestEncoder {
           RequestType.WITHDRAWAL,
           WithdrawalRequestEncoder::encode,
           RequestType.DEPOSIT,
-          DepositEncoder::encode);
+          DepositRequestEncoder::encode,
+          RequestType.CONSOLIDATION,
+          ConsolidationRequestEncoder::encode);
 
   /**
    * Encodes a Request into the provided RLPOutput.

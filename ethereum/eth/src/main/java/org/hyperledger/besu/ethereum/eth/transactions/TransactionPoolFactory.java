@@ -118,7 +118,8 @@ public class TransactionPoolFactory {
                 newPooledTransactionHashesMessageSender),
             ethContext,
             metrics,
-            transactionPoolConfiguration);
+            transactionPoolConfiguration,
+            blobCache);
 
     final TransactionsMessageHandler transactionsMessageHandler =
         new TransactionsMessageHandler(
@@ -357,6 +358,7 @@ public class TransactionPoolFactory {
               miningParameters);
     }
 
-    return new LayeredPendingTransactions(transactionPoolConfiguration, pendingTransactionsSorter);
+    return new LayeredPendingTransactions(
+        transactionPoolConfiguration, pendingTransactionsSorter, ethScheduler);
   }
 }

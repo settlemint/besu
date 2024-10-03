@@ -22,6 +22,7 @@ import static org.hyperledger.besu.cli.config.NetworkName.DEV;
 import static org.hyperledger.besu.cli.config.NetworkName.EXPERIMENTAL_EIPS;
 import static org.hyperledger.besu.cli.config.NetworkName.FUTURE_EIPS;
 import static org.hyperledger.besu.cli.config.NetworkName.HOLESKY;
+import static org.hyperledger.besu.cli.config.NetworkName.LUKSO;
 import static org.hyperledger.besu.cli.config.NetworkName.MAINNET;
 import static org.hyperledger.besu.cli.config.NetworkName.MORDOR;
 import static org.hyperledger.besu.cli.config.NetworkName.SEPOLIA;
@@ -64,6 +65,7 @@ import org.hyperledger.besu.evm.precompile.KZGPointEvalPrecompiledContract;
 import org.hyperledger.besu.metrics.StandardMetricCategory;
 import org.hyperledger.besu.metrics.prometheus.MetricsConfiguration;
 import org.hyperledger.besu.plugin.data.EnodeURL;
+import org.hyperledger.besu.plugin.services.storage.DataStorageFormat;
 import org.hyperledger.besu.util.number.Fraction;
 import org.hyperledger.besu.util.number.Percentage;
 import org.hyperledger.besu.util.number.PositiveNumber;
@@ -170,6 +172,60 @@ public class BesuCommandTest extends CommandTestAbstract {
   }
 
   @Test
+  public void testGenesisOverrideOptions() throws Exception {
+    parseCommand("--override-genesis-config", "shanghaiTime=123");
+
+    final ArgumentCaptor<EthNetworkConfig> networkArg =
+        ArgumentCaptor.forClass(EthNetworkConfig.class);
+
+    verify(mockControllerBuilderFactory).fromEthNetworkConfig(networkArg.capture(), any());
+    verify(mockControllerBuilder).build();
+
+    final EthNetworkConfig config = networkArg.getValue();
+    // mainnet defaults
+    assertThat(config.networkId()).isEqualTo(BigInteger.valueOf(1));
+
+    // assert that shanghaiTime override is applied
+    final GenesisConfigFile actualGenesisConfigFile = (config.genesisConfigFile());
+    assertThat(actualGenesisConfigFile).isNotNull();
+    assertThat(actualGenesisConfigFile.getConfigOptions().getShanghaiTime()).isNotEmpty();
+    assertThat(actualGenesisConfigFile.getConfigOptions().getShanghaiTime().getAsLong())
+        .isEqualTo(123);
+
+    assertThat(commandOutput.toString(UTF_8)).isEmpty();
+    assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
+  }
+
+  @Test
+  public void testGenesisOverrideOptionsWithCustomGenesis() throws Exception {
+    final Path genesisFile = createFakeGenesisFile(GENESIS_VALID_JSON);
+
+    parseCommand(
+        "--genesis-file", genesisFile.toString(), "--override-genesis-config", "shanghaiTime=123");
+
+    final ArgumentCaptor<EthNetworkConfig> networkArg =
+        ArgumentCaptor.forClass(EthNetworkConfig.class);
+
+    verify(mockControllerBuilderFactory).fromEthNetworkConfig(networkArg.capture(), any());
+    verify(mockControllerBuilder).build();
+
+    final EthNetworkConfig config = networkArg.getValue();
+    assertThat(config.bootNodes()).isEmpty();
+    assertThat(config.dnsDiscoveryUrl()).isNull();
+    assertThat(config.networkId()).isEqualTo(BigInteger.valueOf(3141592));
+
+    // then assert that the shanghaiTime is applied
+    final GenesisConfigFile actualGenesisConfigFile = (config.genesisConfigFile());
+    assertThat(actualGenesisConfigFile).isNotNull();
+    assertThat(actualGenesisConfigFile.getConfigOptions().getShanghaiTime()).isNotEmpty();
+    assertThat(actualGenesisConfigFile.getConfigOptions().getShanghaiTime().getAsLong())
+        .isEqualTo(123);
+
+    assertThat(commandOutput.toString(UTF_8)).isEmpty();
+    assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
+  }
+
+  @Test
   public void callingHelpSubCommandMustDisplayUsage() {
     parseCommand("--help");
     final String expectedOutputStart = String.format("Usage:%n%nbesu [OPTIONS] [COMMAND]");
@@ -258,7 +314,7 @@ public class BesuCommandTest extends CommandTestAbstract {
     final Path tempConfigFilePath = createTempFile("an-invalid-file-name-without-extension", "");
     parseCommand("--config-file", tempConfigFilePath.toString());
 
-    final String expectedOutputStart = "Unable to read TOML configuration file";
+    final String expectedOutputStart = "Unable to read from empty TOML configuration file.";
     assertThat(commandErrorOutput.toString(UTF_8)).startsWith(expectedOutputStart);
     assertThat(commandOutput.toString(UTF_8)).isEmpty();
   }
@@ -334,6 +390,7 @@ public class BesuCommandTest extends CommandTestAbstract {
     options.remove(spec.optionsMap().get("--config-file"));
     options.remove(spec.optionsMap().get("--help"));
     options.remove(spec.optionsMap().get("--version"));
+    options.remove(spec.optionsMap().get("--print-paths-and-exit"));
 
     for (final String tomlKey : tomlResult.keySet()) {
       final CommandLine.Model.OptionSpec optionSpec = spec.optionsMap().get("--" + tomlKey);
@@ -804,6 +861,28 @@ public class BesuCommandTest extends CommandTestAbstract {
   }
 
   @Test
+  public void poaDiscoveryRetryBootnodesValueTrueMustBeUsed() {
+    parseCommand("--poa-discovery-retry-bootnodes", "true");
+
+    verify(mockRunnerBuilder).poaDiscoveryRetryBootnodes(eq(true));
+    verify(mockRunnerBuilder).build();
+
+    assertThat(commandOutput.toString(UTF_8)).isEmpty();
+    assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
+  }
+
+  @Test
+  public void poaDiscoveryRetryBootnodesValueFalseMustBeUsed() {
+    parseCommand("--poa-discovery-retry-bootnodes", "false");
+
+    verify(mockRunnerBuilder).poaDiscoveryRetryBootnodes(eq(false));
+    verify(mockRunnerBuilder).build();
+
+    assertThat(commandOutput.toString(UTF_8)).isEmpty();
+    assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
+  }
+
+  @Test
   public void callingWithBootnodesOptionButNoValueMustPassEmptyBootnodeList() {
     parseCommand("--bootnodes");
 
@@ -1087,8 +1166,8 @@ public class BesuCommandTest extends CommandTestAbstract {
   }
 
   @Test
-  public void syncMode_full() {
-    parseCommand("--sync-mode", "FULL");
+  public void syncMode_full_requires_bonsaiLimitTrieLogsToBeDisabled() {
+    parseCommand("--sync-mode", "FULL", "--bonsai-limit-trie-logs-enabled=false");
     verify(mockControllerBuilder).synchronizerConfiguration(syncConfigurationCaptor.capture());
 
     final SynchronizerConfiguration syncConfig = syncConfigurationCaptor.getValue();
@@ -1106,7 +1185,7 @@ public class BesuCommandTest extends CommandTestAbstract {
     assertThat(commandOutput.toString(UTF_8)).isEmpty();
     assertThat(commandErrorOutput.toString(UTF_8))
         .contains(
-            "Invalid value for option '--sync-mode': expected one of [FULL, FAST, SNAP, CHECKPOINT, X_SNAP, X_CHECKPOINT] (case-insensitive) but was 'bogus'");
+            "Invalid value for option '--sync-mode': expected one of [FULL, FAST, SNAP, CHECKPOINT] (case-insensitive) but was 'bogus'");
   }
 
   @Test
@@ -1166,7 +1245,7 @@ public class BesuCommandTest extends CommandTestAbstract {
 
     final SynchronizerConfiguration syncConfig = syncConfigurationCaptor.getValue();
     assertThat(syncConfig.getSyncMode()).isEqualTo(SyncMode.FAST);
-    assertThat(syncConfig.getFastSyncMinimumPeerCount()).isEqualTo(5);
+    assertThat(syncConfig.getSyncMinimumPeerCount()).isEqualTo(5);
     assertThat(commandOutput.toString(UTF_8)).isEmpty();
     assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
   }
@@ -1178,7 +1257,7 @@ public class BesuCommandTest extends CommandTestAbstract {
 
     final SynchronizerConfiguration syncConfig = syncConfigurationCaptor.getValue();
     assertThat(syncConfig.getSyncMode()).isEqualTo(SyncMode.FAST);
-    assertThat(syncConfig.getFastSyncMinimumPeerCount()).isEqualTo(11);
+    assertThat(syncConfig.getSyncMinimumPeerCount()).isEqualTo(11);
     assertThat(commandOutput.toString(UTF_8)).isEmpty();
     assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
   }
@@ -1190,7 +1269,7 @@ public class BesuCommandTest extends CommandTestAbstract {
 
     final SynchronizerConfiguration syncConfig = syncConfigurationCaptor.getValue();
     assertThat(syncConfig.getSyncMode()).isEqualTo(SyncMode.SNAP);
-    assertThat(syncConfig.getFastSyncMinimumPeerCount()).isEqualTo(11);
+    assertThat(syncConfig.getSyncMinimumPeerCount()).isEqualTo(11);
     assertThat(commandOutput.toString(UTF_8)).isEmpty();
     assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
   }
@@ -1202,7 +1281,7 @@ public class BesuCommandTest extends CommandTestAbstract {
 
     final SynchronizerConfiguration syncConfig = syncConfigurationCaptor.getValue();
     assertThat(syncConfig.getSyncMode()).isEqualTo(SyncMode.FAST);
-    assertThat(syncConfig.getFastSyncMinimumPeerCount()).isEqualTo(11);
+    assertThat(syncConfig.getSyncMinimumPeerCount()).isEqualTo(11);
     assertThat(commandOutput.toString(UTF_8)).isEmpty();
     assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
   }
@@ -1215,6 +1294,28 @@ public class BesuCommandTest extends CommandTestAbstract {
     assertThat(commandOutput.toString(UTF_8)).isEmpty();
     assertThat(commandErrorOutput.toString(UTF_8))
         .contains("Invalid value for option '--fast-sync-min-peers': 'ten' is not an int");
+  }
+
+  @Test
+  public void netRestrictParsedCorrectly() {
+    final String subnet1 = "127.0.0.1/24";
+    final String subnet2 = "10.0.0.1/24";
+    parseCommand("--net-restrict", String.join(",", subnet1, subnet2));
+    verify(mockRunnerBuilder).allowedSubnets(allowedSubnetsArgumentCaptor.capture());
+    assertThat(allowedSubnetsArgumentCaptor.getValue().size()).isEqualTo(2);
+    assertThat(allowedSubnetsArgumentCaptor.getValue().get(0).getCidrSignature())
+        .isEqualTo(subnet1);
+    assertThat(allowedSubnetsArgumentCaptor.getValue().get(1).getCidrSignature())
+        .isEqualTo(subnet2);
+  }
+
+  @Test
+  public void netRestrictInvalidShouldFail() {
+    final String subnet = "127.0.0.1/abc";
+    parseCommand("--net-restrict", subnet);
+    Mockito.verifyNoInteractions(mockRunnerBuilder);
+    assertThat(commandErrorOutput.toString(UTF_8))
+        .contains("Invalid value for option '--net-restrict'");
   }
 
   @Test
@@ -1244,8 +1345,58 @@ public class BesuCommandTest extends CommandTestAbstract {
   }
 
   @Test
-  public void parsesValidBonsaiTrieLimitBackLayersOption() {
-    parseCommand("--data-storage-format", "BONSAI", "--bonsai-historical-block-limit", "11");
+  public void bonsaiLimitTrieLogsEnabledByDefault() {
+    parseCommand();
+    verify(mockControllerBuilder)
+        .dataStorageConfiguration(dataStorageConfigurationArgumentCaptor.capture());
+
+    final DataStorageConfiguration dataStorageConfiguration =
+        dataStorageConfigurationArgumentCaptor.getValue();
+    assertThat(dataStorageConfiguration.getDataStorageFormat()).isEqualTo(BONSAI);
+    assertThat(dataStorageConfiguration.getBonsaiLimitTrieLogsEnabled()).isTrue();
+    assertThat(commandOutput.toString(UTF_8)).isEmpty();
+    assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
+  }
+
+  @Test
+  public void bonsaiLimitTrieLogsDisabledWhenFullSyncEnabled() {
+    parseCommand("--sync-mode=FULL");
+
+    verify(mockControllerBuilder)
+        .dataStorageConfiguration(dataStorageConfigurationArgumentCaptor.capture());
+
+    final DataStorageConfiguration dataStorageConfiguration =
+        dataStorageConfigurationArgumentCaptor.getValue();
+    assertThat(dataStorageConfiguration.getDataStorageFormat()).isEqualTo(BONSAI);
+    assertThat(dataStorageConfiguration.getBonsaiLimitTrieLogsEnabled()).isFalse();
+    verify(mockLogger)
+        .warn(
+            "Forcing {}, since it cannot be enabled with --sync-mode={} and --data-storage-format={}.",
+            "--bonsai-limit-trie-logs-enabled=false",
+            SyncMode.FULL,
+            DataStorageFormat.BONSAI);
+    assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
+  }
+
+  @Test
+  public void parsesInvalidWhenFullSyncAndBonsaiLimitTrieLogsExplicitlyTrue() {
+    parseCommand("--sync-mode=FULL", "--bonsai-limit-trie-logs-enabled=true");
+
+    Mockito.verifyNoInteractions(mockRunnerBuilder);
+    assertThat(commandOutput.toString(UTF_8)).isEmpty();
+    assertThat(commandErrorOutput.toString(UTF_8))
+        .contains(
+            "Cannot enable --bonsai-limit-trie-logs-enabled with --sync-mode=FULL and --data-storage-format=BONSAI. You must set --bonsai-limit-trie-logs-enabled=false or use a different sync-mode");
+  }
+
+  @Test
+  public void parsesValidBonsaiHistoricalBlockLimitOption() {
+    parseCommand(
+        "--bonsai-limit-trie-logs-enabled=false",
+        "--data-storage-format",
+        "BONSAI",
+        "--bonsai-historical-block-limit",
+        "11");
     verify(mockControllerBuilder)
         .dataStorageConfiguration(dataStorageConfigurationArgumentCaptor.capture());
 
@@ -1258,7 +1409,7 @@ public class BesuCommandTest extends CommandTestAbstract {
   }
 
   @Test
-  public void parsesInvalidBonsaiTrieLimitBackLayersOption() {
+  public void parsesInvalidBonsaiHistoricalBlockLimitOption() {
 
     parseCommand("--data-storage-format", "BONSAI", "--bonsai-maximum-back-layers-to-load", "ten");
 
@@ -1694,6 +1845,22 @@ public class BesuCommandTest extends CommandTestAbstract {
     assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
 
     verify(mockLogger, never()).warn(contains("Holesky is deprecated and will be shutdown"));
+  }
+
+  @Test
+  public void luksoValuesAreUsed() {
+    parseCommand("--network", "lukso");
+
+    final ArgumentCaptor<EthNetworkConfig> networkArg =
+        ArgumentCaptor.forClass(EthNetworkConfig.class);
+
+    verify(mockControllerBuilderFactory).fromEthNetworkConfig(networkArg.capture(), any());
+    verify(mockControllerBuilder).build();
+
+    assertThat(networkArg.getValue()).isEqualTo(EthNetworkConfig.getNetworkConfig(LUKSO));
+
+    assertThat(commandOutput.toString(UTF_8)).isEmpty();
+    assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
   }
 
   @Test
@@ -2390,5 +2557,17 @@ public class BesuCommandTest extends CommandTestAbstract {
 
     assertThat(commandOutput.toString(UTF_8)).isEmpty();
     assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
+  }
+
+  @Test
+  void helpOutputShouldDisplayCorrectDefaultValues() {
+    parseCommand("--help");
+
+    final String commandOutputString = commandOutput.toString(UTF_8);
+    final String errorOutputString = commandErrorOutput.toString(UTF_8);
+
+    assertThat(commandOutputString).doesNotContain("$DEFAULT-VALUE");
+
+    assertThat(errorOutputString).isEmpty();
   }
 }

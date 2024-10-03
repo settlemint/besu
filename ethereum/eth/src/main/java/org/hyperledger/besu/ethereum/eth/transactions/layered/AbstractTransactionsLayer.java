@@ -14,15 +14,18 @@
  */
 package org.hyperledger.besu.ethereum.eth.transactions.layered;
 
+import static java.util.Collections.unmodifiableList;
 import static org.hyperledger.besu.ethereum.eth.transactions.TransactionAddedResult.ADDED;
 import static org.hyperledger.besu.ethereum.eth.transactions.TransactionAddedResult.ALREADY_KNOWN;
 import static org.hyperledger.besu.ethereum.eth.transactions.TransactionAddedResult.REJECTED_UNDERPRICED_REPLACEMENT;
 import static org.hyperledger.besu.ethereum.eth.transactions.TransactionAddedResult.TRY_NEXT_LAYER;
-import static org.hyperledger.besu.ethereum.eth.transactions.layered.TransactionsLayer.RemovalReason.CONFIRMED;
-import static org.hyperledger.besu.ethereum.eth.transactions.layered.TransactionsLayer.RemovalReason.CROSS_LAYER_REPLACED;
-import static org.hyperledger.besu.ethereum.eth.transactions.layered.TransactionsLayer.RemovalReason.EVICTED;
-import static org.hyperledger.besu.ethereum.eth.transactions.layered.TransactionsLayer.RemovalReason.PROMOTED;
-import static org.hyperledger.besu.ethereum.eth.transactions.layered.TransactionsLayer.RemovalReason.REPLACED;
+import static org.hyperledger.besu.ethereum.eth.transactions.layered.AddReason.MOVE;
+import static org.hyperledger.besu.ethereum.eth.transactions.layered.RemovalReason.LayerMoveReason.EVICTED;
+import static org.hyperledger.besu.ethereum.eth.transactions.layered.RemovalReason.PoolRemovalReason.BELOW_MIN_SCORE;
+import static org.hyperledger.besu.ethereum.eth.transactions.layered.RemovalReason.PoolRemovalReason.CONFIRMED;
+import static org.hyperledger.besu.ethereum.eth.transactions.layered.RemovalReason.PoolRemovalReason.CROSS_LAYER_REPLACED;
+import static org.hyperledger.besu.ethereum.eth.transactions.layered.RemovalReason.PoolRemovalReason.REPLACED;
+import static org.hyperledger.besu.ethereum.eth.transactions.layered.RemovalReason.RemovedFrom.POOL;
 
 import org.hyperledger.besu.datatypes.Address;
 import org.hyperledger.besu.datatypes.Hash;
@@ -54,7 +57,6 @@ import java.util.function.BiFunction;
 import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -138,6 +140,14 @@ public abstract class AbstractTransactionsLayer implements TransactionsLayer {
         || nextLayer.contains(transaction);
   }
 
+  /**
+   * Return the full content of this layer, organized as a list of sender pending txs. For each
+   * sender the collection pending txs is ordered by nonce asc.
+   *
+   * @return a list of sender pending txs
+   */
+  public abstract List<SenderPendingTransactions> getBySender();
+
   @Override
   public List<PendingTransaction> getAll() {
     final List<PendingTransaction> allNextLayers = nextLayer.getAll();
@@ -161,7 +171,8 @@ public abstract class AbstractTransactionsLayer implements TransactionsLayer {
       final PendingTransaction pendingTransaction, final int gap);
 
   @Override
-  public TransactionAddedResult add(final PendingTransaction pendingTransaction, final int gap) {
+  public TransactionAddedResult add(
+      final PendingTransaction pendingTransaction, final int gap, final AddReason addReason) {
 
     // is replacing an existing one?
     TransactionAddedResult addStatus = maybeReplaceTransaction(pendingTransaction);
@@ -170,21 +181,26 @@ public abstract class AbstractTransactionsLayer implements TransactionsLayer {
     }
 
     if (addStatus.equals(TRY_NEXT_LAYER)) {
-      return addToNextLayer(pendingTransaction, gap);
+      return addToNextLayer(pendingTransaction, gap, addReason);
     }
 
     if (addStatus.isSuccess()) {
-      processAdded(pendingTransaction.detachedCopy());
+      final var addedPendingTransaction =
+          addReason.makeCopy() ? pendingTransaction.detachedCopy() : pendingTransaction;
+      processAdded(addedPendingTransaction, addReason);
       addStatus.maybeReplacedTransaction().ifPresent(this::replaced);
 
-      nextLayer.notifyAdded(pendingTransaction);
+      nextLayer.notifyAdded(addedPendingTransaction);
 
       if (!maybeFull()) {
         // if there is space try to see if the added tx filled some gaps
-        tryFillGap(addStatus, pendingTransaction, getRemainingPromotionsPerType());
+        tryFillGap(addStatus, addedPendingTransaction, getRemainingPromotionsPerType());
       }
 
-      ethScheduler.scheduleTxWorkerTask(() -> notifyTransactionAdded(pendingTransaction));
+      if (addReason.sendNotification()) {
+        ethScheduler.scheduleTxWorkerTask(() -> notifyTransactionAdded(addedPendingTransaction));
+      }
+
     } else {
       final var rejectReason = addStatus.maybeInvalidReason().orElseThrow();
       metrics.incrementRejected(pendingTransaction, rejectReason, name());
@@ -230,7 +246,7 @@ public abstract class AbstractTransactionsLayer implements TransactionsLayer {
               pendingTransaction.getNonce(),
               remainingPromotionsPerType);
       if (promotedTx != null) {
-        processAdded(promotedTx);
+        processAdded(promotedTx, AddReason.PROMOTED);
         if (!maybeFull()) {
           tryFillGap(ADDED, promotedTx, remainingPromotionsPerType);
         }
@@ -278,7 +294,8 @@ public abstract class AbstractTransactionsLayer implements TransactionsLayer {
 
         if (remainingPromotionsPerType[txType.ordinal()] > 0) {
           senderTxs.pollFirstEntry();
-          processRemove(senderTxs, candidateTx.getTransaction(), PROMOTED);
+          processRemove(
+              senderTxs, candidateTx.getTransaction(), RemovalReason.LayerMoveReason.PROMOTED);
           metrics.incrementRemoved(candidateTx, "promoted", name());
 
           if (senderTxs.isEmpty()) {
@@ -294,32 +311,34 @@ public abstract class AbstractTransactionsLayer implements TransactionsLayer {
   }
 
   private TransactionAddedResult addToNextLayer(
-      final PendingTransaction pendingTransaction, final int distance) {
+      final PendingTransaction pendingTransaction, final int distance, final AddReason addReason) {
     return addToNextLayer(
         txsBySender.getOrDefault(pendingTransaction.getSender(), EMPTY_SENDER_TXS),
         pendingTransaction,
-        distance);
+        distance,
+        addReason);
   }
 
   protected TransactionAddedResult addToNextLayer(
       final NavigableMap<Long, PendingTransaction> senderTxs,
       final PendingTransaction pendingTransaction,
-      final int distance) {
+      final int distance,
+      final AddReason addReason) {
     final int nextLayerDistance;
     if (senderTxs.isEmpty()) {
       nextLayerDistance = distance;
     } else {
       nextLayerDistance = (int) (pendingTransaction.getNonce() - (senderTxs.lastKey() + 1));
     }
-    return nextLayer.add(pendingTransaction, nextLayerDistance);
+    return nextLayer.add(pendingTransaction, nextLayerDistance, addReason);
   }
 
-  private void processAdded(final PendingTransaction addedTx) {
+  private void processAdded(final PendingTransaction addedTx, final AddReason addReason) {
     pendingTransactions.put(addedTx.getHash(), addedTx);
     final var senderTxs = txsBySender.computeIfAbsent(addedTx.getSender(), s -> new TreeMap<>());
     senderTxs.put(addedTx.getNonce(), addedTx);
     increaseCounters(addedTx);
-    metrics.incrementAdded(addedTx, name());
+    metrics.incrementAdded(addedTx, addReason, name());
     internalAdd(senderTxs, addedTx);
   }
 
@@ -345,7 +364,7 @@ public abstract class AbstractTransactionsLayer implements TransactionsLayer {
         ++evictedCount;
         evictedSize += lastTx.memorySize();
         // evicted can always be added to the next layer
-        addToNextLayer(lessReadySenderTxs, lastTx, 0);
+        addToNextLayer(lessReadySenderTxs, lastTx, 0, MOVE);
       }
 
       if (lessReadySenderTxs.isEmpty()) {
@@ -403,6 +422,9 @@ public abstract class AbstractTransactionsLayer implements TransactionsLayer {
       decreaseCounters(removedTx);
       metrics.incrementRemoved(removedTx, removalReason.label(), name());
       internalRemove(senderTxs, removedTx, removalReason);
+      if (removalReason.removedFrom().equals(POOL)) {
+        notifyTransactionDropped(removedTx);
+      }
     }
     return removedTx;
   }
@@ -451,9 +473,24 @@ public abstract class AbstractTransactionsLayer implements TransactionsLayer {
       nextLayer
           .promote(
               this::promotionFilter, cacheFreeSpace(), freeSlots, getRemainingPromotionsPerType())
-          .forEach(this::processAdded);
+          .forEach(addedTx -> processAdded(addedTx, AddReason.PROMOTED));
     }
   }
+
+  @Override
+  public void penalize(final PendingTransaction penalizedTransaction) {
+    if (pendingTransactions.containsKey(penalizedTransaction.getHash())) {
+      internalPenalize(penalizedTransaction);
+      metrics.incrementPenalized(penalizedTransaction, name());
+      if (penalizedTransaction.getScore() < poolConfig.getMinScore()) {
+        remove(penalizedTransaction, BELOW_MIN_SCORE);
+      }
+    } else {
+      nextLayer.penalize(penalizedTransaction);
+    }
+  }
+
+  protected abstract void internalPenalize(final PendingTransaction pendingTransaction);
 
   /**
    * How many txs of a specified type can be promoted? This make sense when a max number of txs of a
@@ -548,16 +585,16 @@ public abstract class AbstractTransactionsLayer implements TransactionsLayer {
     return priorityTxs;
   }
 
-  Stream<PendingTransaction> stream(final Address sender) {
-    return txsBySender.getOrDefault(sender, EMPTY_SENDER_TXS).values().stream();
-  }
-
   @Override
-  public List<PendingTransaction> getAllFor(final Address sender) {
-    return Stream.concat(stream(sender), nextLayer.getAllFor(sender).stream()).toList();
+  public synchronized List<PendingTransaction> getAllFor(final Address sender) {
+    final var fromNextLayers = nextLayer.getAllFor(sender);
+    final var fromThisLayer = txsBySender.getOrDefault(sender, EMPTY_SENDER_TXS).values();
+    final var concatLayers =
+        new ArrayList<PendingTransaction>(fromThisLayer.size() + fromNextLayers.size());
+    concatLayers.addAll(fromThisLayer);
+    concatLayers.addAll(fromNextLayers);
+    return unmodifiableList(concatLayers);
   }
-
-  abstract Stream<PendingTransaction> stream();
 
   @Override
   public int count() {

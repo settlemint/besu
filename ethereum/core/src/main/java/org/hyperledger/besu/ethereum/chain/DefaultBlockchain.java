@@ -31,8 +31,10 @@ import org.hyperledger.besu.ethereum.core.LogWithMetadata;
 import org.hyperledger.besu.ethereum.core.Transaction;
 import org.hyperledger.besu.ethereum.core.TransactionReceipt;
 import org.hyperledger.besu.metrics.BesuMetricCategory;
+import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
 import org.hyperledger.besu.metrics.prometheus.PrometheusMetricsSystem;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
+import org.hyperledger.besu.plugin.services.metrics.Counter;
 import org.hyperledger.besu.util.InvalidConfigurationException;
 import org.hyperledger.besu.util.Subscribers;
 
@@ -83,6 +85,9 @@ public class DefaultBlockchain implements MutableBlockchain {
   private final Optional<Cache<Hash, List<TransactionReceipt>>> transactionReceiptsCache;
   private final Optional<Cache<Hash, Difficulty>> totalDifficultyCache;
 
+  private Counter gasUsedCounter = NoOpMetricsSystem.NO_OP_COUNTER;
+  private Counter numberOfTransactionsCounter = NoOpMetricsSystem.NO_OP_COUNTER;
+
   private DefaultBlockchain(
       final Optional<Block> genesisBlock,
       final BlockchainStorage blockchainStorage,
@@ -112,11 +117,72 @@ public class DefaultBlockchain implements MutableBlockchain {
     chainHeadTransactionCount = chainHeadBody.getTransactions().size();
     chainHeadOmmerCount = chainHeadBody.getOmmers().size();
 
+    this.reorgLoggingThreshold = reorgLoggingThreshold;
+    this.blockChoiceRule = heaviestChainBlockChoiceRule;
+    this.numberOfBlocksToCache = numberOfBlocksToCache;
+
+    if (numberOfBlocksToCache != 0) {
+      blockHeadersCache =
+          Optional.of(
+              CacheBuilder.newBuilder().recordStats().maximumSize(numberOfBlocksToCache).build());
+      blockBodiesCache =
+          Optional.of(
+              CacheBuilder.newBuilder().recordStats().maximumSize(numberOfBlocksToCache).build());
+      transactionReceiptsCache =
+          Optional.of(
+              CacheBuilder.newBuilder().recordStats().maximumSize(numberOfBlocksToCache).build());
+      totalDifficultyCache =
+          Optional.of(
+              CacheBuilder.newBuilder().recordStats().maximumSize(numberOfBlocksToCache).build());
+      CacheMetricsCollector cacheMetrics = new CacheMetricsCollector();
+      cacheMetrics.addCache("blockHeaders", blockHeadersCache.get());
+      cacheMetrics.addCache("blockBodies", blockBodiesCache.get());
+      cacheMetrics.addCache("transactionReceipts", transactionReceiptsCache.get());
+      cacheMetrics.addCache("totalDifficulty", totalDifficultyCache.get());
+      if (metricsSystem instanceof PrometheusMetricsSystem prometheusMetricsSystem)
+        prometheusMetricsSystem.addCollector(BesuMetricCategory.BLOCKCHAIN, () -> cacheMetrics);
+    } else {
+      blockHeadersCache = Optional.empty();
+      blockBodiesCache = Optional.empty();
+      transactionReceiptsCache = Optional.empty();
+      totalDifficultyCache = Optional.empty();
+    }
+
+    createCounters(metricsSystem);
+    createGauges(metricsSystem);
+  }
+
+  private void createCounters(final MetricsSystem metricsSystem) {
+    gasUsedCounter =
+        metricsSystem.createCounter(
+            BesuMetricCategory.BLOCKCHAIN, "chain_head_gas_used_counter", "Counter for Gas used");
+
+    numberOfTransactionsCounter =
+        metricsSystem.createCounter(
+            BesuMetricCategory.BLOCKCHAIN,
+            "chain_head_transaction_count_counter",
+            "Counter for the number of transactions");
+  }
+
+  private void createGauges(final MetricsSystem metricsSystem) {
     metricsSystem.createLongGauge(
         BesuMetricCategory.ETHEREUM,
         "blockchain_height",
         "The current height of the canonical chain",
         this::getChainHeadBlockNumber);
+
+    metricsSystem.createLongGauge(
+        BesuMetricCategory.ETHEREUM,
+        "blockchain_finalized_block",
+        "The current finalized block number",
+        this::getFinalizedBlockNumber);
+
+    metricsSystem.createLongGauge(
+        BesuMetricCategory.ETHEREUM,
+        "blockchain_safe_block",
+        "The current safe block number",
+        this::getSafeBlockNumber);
+
     metricsSystem.createGauge(
         BesuMetricCategory.BLOCKCHAIN,
         "difficulty_total",
@@ -152,37 +218,6 @@ public class DefaultBlockchain implements MutableBlockchain {
         "chain_head_ommer_count",
         "Number of ommers in the current chain head block",
         () -> chainHeadOmmerCount);
-
-    this.reorgLoggingThreshold = reorgLoggingThreshold;
-    this.blockChoiceRule = heaviestChainBlockChoiceRule;
-    this.numberOfBlocksToCache = numberOfBlocksToCache;
-
-    if (numberOfBlocksToCache != 0) {
-      blockHeadersCache =
-          Optional.of(
-              CacheBuilder.newBuilder().recordStats().maximumSize(numberOfBlocksToCache).build());
-      blockBodiesCache =
-          Optional.of(
-              CacheBuilder.newBuilder().recordStats().maximumSize(numberOfBlocksToCache).build());
-      transactionReceiptsCache =
-          Optional.of(
-              CacheBuilder.newBuilder().recordStats().maximumSize(numberOfBlocksToCache).build());
-      totalDifficultyCache =
-          Optional.of(
-              CacheBuilder.newBuilder().recordStats().maximumSize(numberOfBlocksToCache).build());
-      CacheMetricsCollector cacheMetrics = new CacheMetricsCollector();
-      cacheMetrics.addCache("blockHeaders", blockHeadersCache.get());
-      cacheMetrics.addCache("blockBodies", blockBodiesCache.get());
-      cacheMetrics.addCache("transactionReceipts", transactionReceiptsCache.get());
-      cacheMetrics.addCache("totalDifficulty", totalDifficultyCache.get());
-      if (metricsSystem instanceof PrometheusMetricsSystem prometheusMetricsSystem)
-        prometheusMetricsSystem.addCollector(BesuMetricCategory.BLOCKCHAIN, () -> cacheMetrics);
-    } else {
-      blockHeadersCache = Optional.empty();
-      blockBodiesCache = Optional.empty();
-      transactionReceiptsCache = Optional.empty();
-      totalDifficultyCache = Optional.empty();
-    }
   }
 
   public static MutableBlockchain createMutable(
@@ -284,7 +319,10 @@ public class DefaultBlockchain implements MutableBlockchain {
 
   @Override
   public Block getChainHeadBlock() {
-    return new Block(chainHeader, blockchainStorage.getBlockBody(chainHeader.getHash()).get());
+    return new Block(
+        chainHeader,
+        getBlockBody(chainHeader.getHash())
+            .orElseGet(() -> getBlockBodySafe(chainHeader.getHash()).get()));
   }
 
   @Override
@@ -320,6 +358,11 @@ public class DefaultBlockchain implements MutableBlockchain {
                 Optional.ofNullable(cache.getIfPresent(blockHeaderHash))
                     .or(() -> blockchainStorage.getBlockBody(blockHeaderHash)))
         .orElseGet(() -> blockchainStorage.getBlockBody(blockHeaderHash));
+  }
+
+  @Override
+  public synchronized Optional<BlockBody> getBlockBodySafe(final Hash blockHeaderHash) {
+    return getBlockBody(blockHeaderHash);
   }
 
   @Override
@@ -469,7 +512,8 @@ public class DefaultBlockchain implements MutableBlockchain {
     updater.commit();
   }
 
-  private Difficulty calculateTotalDifficulty(final BlockHeader blockHeader) {
+  @Override
+  public Difficulty calculateTotalDifficulty(final BlockHeader blockHeader) {
     if (blockHeader.getNumber() == BlockHeader.GENESIS_BLOCK_NUMBER) {
       return blockHeader.getDifficulty();
     }
@@ -523,6 +567,10 @@ public class DefaultBlockchain implements MutableBlockchain {
     updater.setChainHead(newBlockHash);
     indexTransactionForBlock(
         updater, newBlockHash, blockWithReceipts.getBlock().getBody().getTransactions());
+    gasUsedCounter.inc(blockWithReceipts.getHeader().getGasUsed());
+    numberOfTransactionsCounter.inc(
+        blockWithReceipts.getBlock().getBody().getTransactions().size());
+
     return BlockAddedEvent.createForHeadAdvancement(
         blockWithReceipts.getBlock(),
         LogWithMetadata.generate(
@@ -729,6 +777,14 @@ public class DefaultBlockchain implements MutableBlockchain {
     final var updater = blockchainStorage.updater();
     updater.setSafeBlock(blockHash);
     updater.commit();
+  }
+
+  private long getFinalizedBlockNumber() {
+    return this.getFinalized().flatMap(this::getBlockHeader).map(BlockHeader::getNumber).orElse(0L);
+  }
+
+  private long getSafeBlockNumber() {
+    return this.getSafeBlock().flatMap(this::getBlockHeader).map(BlockHeader::getNumber).orElse(0L);
   }
 
   private void updateCacheForNewCanonicalHead(final Block block, final Difficulty uInt256) {

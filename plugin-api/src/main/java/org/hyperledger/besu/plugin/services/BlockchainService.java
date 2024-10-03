@@ -17,9 +17,13 @@ package org.hyperledger.besu.plugin.services;
 import org.hyperledger.besu.datatypes.Hash;
 import org.hyperledger.besu.datatypes.Wei;
 import org.hyperledger.besu.plugin.Unstable;
+import org.hyperledger.besu.plugin.data.BlockBody;
 import org.hyperledger.besu.plugin.data.BlockContext;
 import org.hyperledger.besu.plugin.data.BlockHeader;
+import org.hyperledger.besu.plugin.data.TransactionReceipt;
 
+import java.math.BigInteger;
+import java.util.List;
 import java.util.Optional;
 
 /** A service that plugins can use to query blocks by number */
@@ -41,6 +45,23 @@ public interface BlockchainService extends BesuService {
   Hash getChainHeadHash();
 
   /**
+   * Get the receipts for a block by block hash
+   *
+   * @param blockHash the block hash
+   * @return the transaction receipts
+   */
+  Optional<List<TransactionReceipt>> getReceiptsByBlockHash(Hash blockHash);
+
+  /**
+   * Store a block
+   *
+   * @param blockHeader the block header
+   * @param blockBody the block body
+   * @param receipts the transaction receipts
+   */
+  void storeBlock(BlockHeader blockHeader, BlockBody blockBody, List<TransactionReceipt> receipts);
+
+  /**
    * Get the block header of the chain head
    *
    * @return chain head block header
@@ -53,4 +74,44 @@ public interface BlockchainService extends BesuService {
    * @return base fee of the next block or empty if the fee market does not support base fee
    */
   Optional<Wei> getNextBlockBaseFee();
+
+  /**
+   * Get the block hash of the safe block
+   *
+   * @return the block hash of the safe block
+   */
+  Optional<Hash> getSafeBlock();
+
+  /**
+   * Get the block hash of the finalized block
+   *
+   * @return the block hash of the finalized block
+   */
+  Optional<Hash> getFinalizedBlock();
+
+  /**
+   * Set the finalized block for non-PoS networks
+   *
+   * @param blockHash Hash of the finalized block
+   * @throws IllegalArgumentException if the block hash is not on the chain
+   * @throws UnsupportedOperationException if the network is a PoS network
+   */
+  void setFinalizedBlock(Hash blockHash)
+      throws IllegalArgumentException, UnsupportedOperationException;
+
+  /**
+   * Set the safe block for non-PoS networks
+   *
+   * @param blockHash Hash of the finalized block
+   * @throws IllegalArgumentException if the block hash is not on the chain
+   * @throws UnsupportedOperationException if the network is a PoS network
+   */
+  void setSafeBlock(Hash blockHash) throws IllegalArgumentException, UnsupportedOperationException;
+
+  /**
+   * Get the chain id
+   *
+   * @return the chain id
+   */
+  Optional<BigInteger> getChainId();
 }
